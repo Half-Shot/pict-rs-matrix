@@ -1,0 +1,19 @@
+{
+  "name": "pict-rs-matrix",
+  "version": "0.0.0",
+  "description": "A matrix proxy for pict-rs.",
+  "main": "lib/index.js",
+  "author": "Half-Shot <me@half-shot.uk>",
+  "license": "MIT",
+  "private": false,
+  "dependencies": {
+    "fastify": "^4.25.2",
+    "matrix-appservice-bridge": "^10.0.0",
+    "nedb": "^1.8.0",
+    "typescript": "^5.3.3"
+  },
+  "devDependencies": {
+    "@tsconfig/node20": "^20.1.2",
+    "@types/node": "^20.10.7"
+  }
+}
