@@ -2,7 +2,7 @@ import Fastify, { FastifyReply, FastifyRequest } from 'fastify'
 import { MatrixHostResolver } from 'matrix-appservice-bridge';
 import { ReadableStream } from 'node:stream/web';
 import { PictClient } from './pictClient';
-import { hashMedia } from './utils';
+import { defaultContentType, hashMedia } from './utils';
 
 /*
  TO IMPLEMENT
@@ -48,9 +48,9 @@ export class Webserver {
         }
         console.log('Media not cached');
         const homeserver = await this.hostResolver.resolveMatrixServer(serverName);
-        // TODO: caching
         // TODO: fileName
-        const mediaUrl = new URL(`/_matrix/media/v3/download/${serverName}/${mediaId}`, homeserver.url);
+
+        const mediaUrl = new URL(`/_matrix/media/v3/download/${serverName}/${mediaId}?allow_remote=false`, homeserver.url);
         // TODO: stream
         const file = await fetch(mediaUrl, { headers: {
             host: homeserver.hostHeader,
@@ -83,7 +83,7 @@ export class Webserver {
             data.push(value);
         } while (true);
         reply.raw.end();
-        const blob = new Blob(data,  { type: contentType || "application/octet-stream"});
+        const blob = new Blob(data,  { type: contentType || defaultContentType});
         // Now write back to pict.
         await this.pict.uploadMedia(storedMediaId, blob);
     }
