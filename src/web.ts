@@ -1,8 +1,8 @@
-import Fastify, { FastifyReply, FastifyRequest } from 'fastify'
 import { MatrixHostResolver } from 'matrix-appservice-bridge';
-import { ReadableStream } from 'node:stream/web';
 import { PictClient } from './pictClient';
 import { defaultContentType, hashMedia } from './utils';
+import { IncomingMessage, Server, ServerResponse, createServer } from "http";
+import Router from "find-my-way";
 
 /*
  TO IMPLEMENT
@@ -18,32 +18,33 @@ PUT /_matrix/media/v3/upload/{serverName}/{mediaId}
 
 
 export class Webserver {
-    private readonly fastify: ReturnType<typeof Fastify>;
+    private readonly server: Server;
     private readonly hostResolver: MatrixHostResolver = new MatrixHostResolver();
     constructor(private readonly port: number, private readonly pict: PictClient) {
-        this.fastify = Fastify({
-            logger: true
-        })
-        // Declare a route
-        this.fastify.get('/_matrix/media/v3/download/:serverName/:mediaId/:fileName?', this.getDownloadMedia.bind(this));
+        const router = Router();
+        router.on('GET', '/_matrix/media/v3/download/:serverName/:mediaId/:fileName?', this.getDownloadMedia.bind(this));
+        this.server = createServer((request, response) => {
+            router.lookup(request, response);
+        });
     }
 
-    async getDownloadMedia(request: FastifyRequest, reply: FastifyReply) {
-        const { serverName, mediaId, fileName } = request.params as {serverName: string, mediaId: string, fileName?: string};
+    async getDownloadMedia(request: IncomingMessage, reply: ServerResponse<IncomingMessage>, {serverName, mediaId, fileName}: Record<string, string|undefined>) {
+        if (!serverName || !mediaId) {
+            throw Error('Missing required serverName, mediaId');
+        }
         const storedMediaId = hashMedia(serverName, mediaId);
         const cachedMedia = await this.pict.getMedia(storedMediaId);
         if (cachedMedia) {
             console.log('Using cached media');
-            reply.hijack();
-            reply.raw.setHeader('Content-Type', cachedMedia.type);
+            reply.setHeader('Content-Type', cachedMedia.type);
             if (cachedMedia.length) {
-                reply.raw.setHeader('Content-Type', cachedMedia.length);
+                reply.setHeader('Content-Type', cachedMedia.length);
             }
-            reply.raw.writeHead(200)
+            reply.writeHead(200);
             for await (const chunk of cachedMedia.stream) {
-                reply.raw.write(chunk);
+                reply.write(chunk);
             }
-            reply.raw.end();
+            reply.end();
             return;
         }
         console.log('Media not cached');
@@ -56,43 +57,44 @@ export class Webserver {
             host: homeserver.hostHeader,
         }});
         if (file.status !== 200) {
-            reply.statusCode = 404;
-            reply.send({ errcode: 'M_NOT_FOUND', error: 'Media not found'});
+            reply.setHeader('content-type', 'application/json');
+            reply.writeHead(404);
+            reply.write(JSON.stringify({ errcode: 'M_NOT_FOUND', error: 'Media not found'}));
             return;
         }
         reply.statusCode = 200;
-        reply.hijack();
         const contentLength = file.headers.get('Content-Length');
         const contentType = file.headers.get('Content-Type');
         if (contentLength) {
-            reply.raw.setHeader('Content-Length', contentLength);
+            reply.setHeader('Content-Length', contentLength);
         }
         if (contentType) {
-            reply.raw.setHeader('Content-Type', contentType);
+            reply.setHeader('Content-Type', contentType);
         }
-        reply.raw.writeHead(200);
+        reply.writeHead(200);
         // TODO: Timeout.
-        const reader = file.body!.getReader();
+        if (!file.body) {
+            throw Error('No body on file');
+        }
         const data = [];
-        do {
-            const {done, value} = await reader.read();
-            if (done) {
-                break;
-            }
-            reply.raw.write(value);
-            data.push(value);
-        } while (true);
-        reply.raw.end();
-        const blob = new Blob(data,  { type: contentType || defaultContentType});
+        for await (const chunk of file.body) {
+            reply.write(chunk);
+            data.push(chunk);
+        }
+        reply.end();
         // Now write back to pict.
-        await this.pict.uploadMedia(storedMediaId, blob);
+        try {
+            const blob = new Blob(data,  { type: contentType || defaultContentType});
+            await this.pict.uploadMedia(storedMediaId, blob);
+        } catch (ex) {
+            console.warn(`Failed to handle caching of remote media`, ex);
+        }
     }
 
     async listen() {
         try {
-            await this.fastify.listen({ port: this.port })
+            await this.server.listen({ port: this.port })
         } catch (err) {
-            this.fastify.log.error(err)
             throw err;
         }
     }
